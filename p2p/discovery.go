@@ -2,50 +2,52 @@ package p2p
 
 import (
 	"encoding/json"
-	"fmt"
 	"github.com/Shonminh/distribute-network-demo/p2p/metadata"
+	"log"
 	"net"
 	"time"
 )
 
-func Discovery() {
-
-	// 服务器地址和端口
-	serverAddr := "127.0.0.1:8080"
-
-	// 解析服务器地址
-	udpAddr, err := net.ResolveUDPAddr("udp", serverAddr)
+func (server *Server) checkLiveness(address string) {
+	toUdpAddr, err := net.ResolveUDPAddr("udp", address)
 	if err != nil {
-		fmt.Println("Error resolving Server address:", err)
+		log.Printf("Error resolving Server address%+v, err=%+v", address, err)
 		return
 	}
-
-	// 创建 UDP 连接
-	conn, err := net.DialUDP("udp", nil, udpAddr)
+	fromUdpAddr := server.GetServerUdpAddr()
+	if toUdpAddr.IP.String() == fromUdpAddr.IP.String() && fromUdpAddr.Port == toUdpAddr.Port {
+		return
+	}
+	conn, err := net.DialUDP("udp", nil, toUdpAddr)
 	if err != nil {
-		fmt.Println("Error connecting to Server:", err)
+		log.Printf("Error DialUDP address=%+v, err=%+v\n", address, err)
 		return
 	}
 	defer conn.Close()
-
+	_ = conn.SetDeadline(time.Now().Add(time.Second))
 	// 准备要发送的数据
 	message := genPing()
-	// 发送数据
-	_, err = conn.Write(message)
-	if err != nil {
-		fmt.Println("Error sending data:", err)
-		return
-	}
-
-	// 接收响应
+	conn.Write(message)
 	buffer := make([]byte, msgBufferSize)
-	n, _, err := conn.ReadFromUDP(buffer)
+	n, _, err := conn.ReadFrom(buffer)
 	if err != nil {
-		fmt.Println("Error reading response:", err)
-		return
+		log.Printf("Error ReadFrom address%+v, err=%+v\n", address, err)
 	}
+	rawData := buffer[:n]
+	log.Println("rawData: ", string(rawData))
+}
 
-	fmt.Println("Response from Server:", string(buffer[:n]))
+func (server *Server) discovery() {
+	defer server.wg.Done()
+	for true {
+		t := time.NewTimer(time.Second * 10)
+		select {
+		case <-t.C:
+		}
+		for _, address := range metadata.InitialNodeAddress {
+			server.checkLiveness(address)
+		}
+	}
 }
 
 func genPing() []byte {
