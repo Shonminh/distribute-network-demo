@@ -74,7 +74,7 @@ func (t *Table) LastSeen(item Item) bool {
 	if !ok {
 		return false
 	}
-	// 一小时之内没有ping过
+	// lastCheckDuration之内没有ping过
 	return time.Now().Unix()-lastSeen < lastCheckDuration
 }
 
