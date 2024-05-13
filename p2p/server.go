@@ -65,7 +65,6 @@ func (server *Server) saveConfig() {
 	server.cfg.RoutingNodeList = server.tables.GetAllItems()
 	marshal, _ := json.Marshal(server.cfg)
 	_ = os.WriteFile(*configFile, marshal, 0744)
-	log.Printf("save config to config file...\n")
 }
 
 // 启动的时候把从引导节点的配置和之前存到配置文件发现的node load到table中

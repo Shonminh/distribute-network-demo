@@ -17,6 +17,7 @@ func (server *Server) scheduleCheck() {
 		select {
 		case <-t.C:
 		}
+		log.Printf("start check routing table liveness...\n")
 		server.checkLiveness()
 	}
 }
@@ -28,27 +29,18 @@ func (server *Server) checkLiveness() {
 
 	for i := range tables.Buckets {
 		buckets := tables.Buckets[i]
-		set := map[int]struct{}{}
-		for j, item := range buckets.Items {
+		for _, item := range buckets.Items {
 			if server.tables.LastSeen(*item) {
 				continue
 			}
 			if !server.checkNodeLiveness(*item) {
-				set[j] = struct{}{}
+				if server.tables.Remove(*item) {
+					log.Printf("check node[%+v] not liveness, remove it...\n", item.NodeId)
+				}
 			} else {
 				server.tables.SetSeen(*item)
 			}
 		}
-		if len(set) == 0 {
-			continue
-		}
-		var newItems []*metadata.Item
-		for j := range buckets.Items {
-			if _, ok := set[j]; !ok {
-				newItems = append(newItems, buckets.Items[j])
-			}
-		}
-		buckets.Items = newItems
 	}
 }
 
@@ -108,6 +100,7 @@ func (server *Server) scheduleFindNodes() {
 		select {
 		case <-t.C:
 		}
+		log.Printf("start find neigborhood nodes...\n")
 		server.findNodes()
 	}
 }
@@ -119,6 +112,7 @@ func (server *Server) scheduleSaveCfg() {
 		select {
 		case <-t.C:
 		}
+		log.Printf("start save config file...\n")
 		server.saveConfig()
 	}
 }
@@ -137,7 +131,12 @@ func (server *Server) findNodes() {
 	for len(q) != 0 {
 		item := q[0]
 		q = q[1:]
-		remoteNodes := server.findRemoteNode(item)
+		remoteNodes, err := server.findRemoteNode(item)
+		if err != nil {
+			if server.tables.Remove(item) {
+				log.Printf("check node[%+v] not liveness, remove it...\n", item.NodeId)
+			}
+		}
 		for _, node := range remoteNodes {
 			if _, ok := visit[node]; ok {
 				continue
@@ -153,20 +152,20 @@ func (server *Server) findNodes() {
 	}
 }
 
-func (server *Server) findRemoteNode(address metadata.Item) []metadata.Item {
+func (server *Server) findRemoteNode(address metadata.Item) ([]metadata.Item, error) {
 	toUdpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("%v:%v", address.IP, address.Port))
 	if err != nil {
 		log.Printf("Error resolving Server address%+v, err=%+v", address, err)
-		return nil
+		return nil, err
 	}
 	fromUdpAddr := server.GetServerUdpAddr()
 	if toUdpAddr.IP.String() == fromUdpAddr.IP.String() && fromUdpAddr.Port == toUdpAddr.Port {
-		return nil
+		return nil, nil
 	}
 	conn, err := net.DialUDP("udp", nil, toUdpAddr)
 	if err != nil {
 		log.Printf("Error DialUDP address=%+v, err=%+v\n", address, err)
-		return nil
+		return nil, err
 	}
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(time.Second))
@@ -176,7 +175,7 @@ func (server *Server) findRemoteNode(address metadata.Item) []metadata.Item {
 	n, _, err := conn.ReadFrom(buffer)
 	if err != nil {
 		log.Printf("Error ReadFrom address%+v, err=%+v\n", address, err)
-		return nil
+		return nil, err
 	}
 	rawData := buffer[:n]
 	msg := metadata.Message{}
@@ -184,7 +183,7 @@ func (server *Server) findRemoteNode(address metadata.Item) []metadata.Item {
 	nodeMsg := metadata.FindNodeResultMsg{}
 	_ = json.Unmarshal(msg.Data, &nodeMsg)
 	log.Printf("get find node result msg=%+v...\n", nodeMsg)
-	return nodeMsg.Items
+	return nodeMsg.Items, nil
 }
 
 func (server *Server) genFindNodeMsg() ([]byte, *metadata.FindNodeMsg) {

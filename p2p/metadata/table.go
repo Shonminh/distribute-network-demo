@@ -34,6 +34,39 @@ func (t *Table) SetSeen(item Item) {
 	t.LastCheckMap[item] = time.Now().Unix()
 }
 
+func (t *Table) Exist(item Item) bool {
+	_, ok := t.ItemSet[item]
+	return ok
+}
+
+func (t *Table) Remove(item Item) bool {
+	t.Mu.Lock()
+	defer t.Mu.Unlock()
+
+	if _, ok := t.ItemSet[item]; !ok {
+		return false
+	}
+	delete(t.ItemSet, item)
+	bucket := t.GetBucket(item.NodeId)
+	i := 0
+	for ; i < len(bucket.Items); i++ {
+		if *bucket.Items[i] == item {
+			break
+		}
+	}
+	if *bucket.Items[i] != item {
+		return false
+	}
+	var newItem []*Item
+	for j := range bucket.Items {
+		if j != i {
+			newItem = append(newItem, bucket.Items[j])
+		}
+	}
+	bucket.Items = newItem
+	return true
+}
+
 func (t *Table) LastSeen(item Item) bool {
 	lastSeen, ok := t.LastCheckMap[item]
 	if !ok {
@@ -65,7 +98,11 @@ func (t *Table) FindClosestItem(fromNodeId string, total int) []Item {
 	idx := t.GetBucketIdx(fromNodeId)
 	var res []Item
 	for i := 0; i < len(t.Buckets[idx].Items); i++ {
-		res = append(res, *t.Buckets[idx].Items[i])
+		item := *t.Buckets[idx].Items[i]
+		if item.NodeId == fromNodeId {
+			continue
+		}
+		res = append(res, item)
 	}
 	if len(res) >= total {
 		return res[:total]
@@ -73,7 +110,11 @@ func (t *Table) FindClosestItem(fromNodeId string, total int) []Item {
 
 	for i := idx - 1; i >= 0 && len(res) < total; i-- {
 		for j := 0; j < len(t.Buckets[i].Items) && len(res) < total; j++ {
-			res = append(res, *t.Buckets[i].Items[j])
+			item := *t.Buckets[i].Items[j]
+			if item.NodeId == fromNodeId {
+				continue
+			}
+			res = append(res, item)
 		}
 	}
 	if len(res) >= total {
@@ -81,7 +122,11 @@ func (t *Table) FindClosestItem(fromNodeId string, total int) []Item {
 	}
 	for i := idx + 1; i < len(t.Buckets) && len(res) < total; i++ {
 		for j := 0; j < len(t.Buckets[i].Items) && len(res) < total; j++ {
-			res = append(res, *t.Buckets[i].Items[j])
+			item := *t.Buckets[i].Items[j]
+			if item.NodeId == fromNodeId {
+				continue
+			}
+			res = append(res, item)
 		}
 	}
 	if len(res) >= total {
