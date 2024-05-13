@@ -105,6 +105,10 @@ func (t *Table) Load(item Item) {
 	if _, ok := t.ItemSet[item]; ok {
 		return
 	}
+	// 自身节点不加。
+	if t.NodeId == item.NodeId {
+		return
+	}
 	bucket := t.GetBucket(item.NodeId)
 	if len(bucket.Items) >= maxBucketSize {
 		return

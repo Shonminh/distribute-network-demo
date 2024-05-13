@@ -182,7 +182,7 @@ func (server *Server) findRemoteNode(address metadata.Item) []metadata.Item {
 	msg := metadata.Message{}
 	_ = json.Unmarshal(rawData, &msg)
 	nodeMsg := metadata.FindNodeResultMsg{}
-	_ = json.Unmarshal(msg.Data, nodeMsg)
+	_ = json.Unmarshal(msg.Data, &nodeMsg)
 	log.Printf("get find node result msg=%+v...\n", nodeMsg)
 	return nodeMsg.Items
 }

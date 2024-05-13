@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
-	"fmt"
 	"github.com/Shonminh/distribute-network-demo/p2p/crypto"
 	"github.com/Shonminh/distribute-network-demo/p2p/metadata"
 	"io"
@@ -201,11 +200,6 @@ func (server *Server) ping(ctx context.Context, fromAddr *net.UDPAddr, msg *meta
 	resp := metadata.Message{Type: metadata.Pong, Data: marshal}
 	data, _ := json.Marshal(resp)
 	return server.sendWriter(ctx, &sendMessageGroup{sendData: data, toAddr: fromAddr})
-}
-
-func (server *Server) pong(ctx context.Context, fromAddr *net.UDPAddr, msg *metadata.Message) error {
-	fmt.Printf("PONG, fromAddr=%+v, msg:%+v\n", fromAddr, msg)
-	return nil
 }
 
 // 查找本地路由表中的数据
