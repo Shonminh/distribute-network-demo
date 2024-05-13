@@ -115,7 +115,7 @@ func (server *Server) scheduleFindNodes() {
 func (server *Server) scheduleSaveCfg() {
 	defer server.wg.Done()
 	for true {
-		t := time.NewTimer(time.Second * 30)
+		t := time.NewTimer(time.Second * 10)
 		select {
 		case <-t.C:
 		}

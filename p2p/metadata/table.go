@@ -57,16 +57,7 @@ func (t *Table) GetBucketIdx(fromNodeId string) int {
 
 func (t *Table) AddRequestNodeId(fromNodeId string, ip string, port int) {
 	item := Item{IP: ip, Port: port, NodeId: fromNodeId}
-	if _, ok := t.ItemSet[item]; ok {
-		return
-	}
-	t.Mu.Lock()
-	defer t.Mu.Unlock()
-	bucket := t.GetBucket(fromNodeId)
-	if len(bucket.Items) >= maxBucketSize {
-		return
-	}
-	bucket.Items = append(bucket.Items, &item)
+	t.Load(item)
 }
 
 // FindClosestItem 查找本地表中的最近的节点

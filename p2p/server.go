@@ -156,7 +156,6 @@ func (server *Server) listen() {
 			continue
 		}
 		rawData := buffer[:n]
-		log.Printf("Received message from %s: %s\n", clientAddr.String(), string(rawData))
 		if err = server.dispatcher(context.Background(), clientAddr, rawData); err != nil {
 			log.Printf("failed to process message[%+v]...\n", string(rawData))
 		}
@@ -176,6 +175,7 @@ var ErrSendMsgTimeout = errors.New("ErrSendMsgTimeout")
 func (server *Server) dispatcher(ctx context.Context, fromAddr *net.UDPAddr, rawData []byte) error {
 	message := &metadata.Message{}
 	_ = json.Unmarshal(rawData, message)
+	log.Printf("Received message from %s: %s\n", fromAddr.String(), message)
 	switch message.Type {
 	case metadata.Unknown:
 		return ErrUnknownMessage

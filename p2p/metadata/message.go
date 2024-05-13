@@ -1,8 +1,14 @@
 package metadata
 
+import "fmt"
+
 type Message struct {
 	Type MsgType `json:"type"`
 	Data []byte  `json:"data"`
+}
+
+func (m Message) String() string {
+	return fmt.Sprintf("{type: %+v, data: %+v}", m.Type, string(m.Data))
 }
 
 type MsgType uint
