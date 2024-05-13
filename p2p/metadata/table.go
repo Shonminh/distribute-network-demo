@@ -10,7 +10,7 @@ const (
 	maxBucketSize     = 20 // 每个桶的最大容量
 	sha256Len         = 32
 	lowDistanceSize   = sha256Len*8 - K
-	lastCheckDuration = 3600 // 3600秒
+	lastCheckDuration = 30 // 30秒
 )
 
 type Table struct {
@@ -31,6 +31,8 @@ func NewTable(nodeId string) *Table {
 }
 
 func (t *Table) SetSeen(item Item) {
+	t.Mu.Lock()
+	defer t.Mu.Unlock()
 	t.LastCheckMap[item] = time.Now().Unix()
 }
 
@@ -96,6 +98,8 @@ func (t *Table) AddRequestNodeId(fromNodeId string, ip string, port int) {
 // FindClosestItem 查找本地表中的最近的节点
 func (t *Table) FindClosestItem(fromNodeId string, total int) []Item {
 	idx := t.GetBucketIdx(fromNodeId)
+	t.Mu.Lock()
+	defer t.Mu.Unlock()
 	var res []Item
 	for i := 0; i < len(t.Buckets[idx].Items); i++ {
 		item := *t.Buckets[idx].Items[i]

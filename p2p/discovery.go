@@ -24,23 +24,18 @@ func (server *Server) scheduleCheck() {
 
 func (server *Server) checkLiveness() {
 	tables := server.tables
-	tables.Mu.Lock()
-	defer tables.Mu.Unlock()
-
-	for i := range tables.Buckets {
-		buckets := tables.Buckets[i]
-		for _, item := range buckets.Items {
-			if server.tables.LastSeen(*item) {
-				continue
-			}
-			if !server.checkNodeLiveness(*item) {
-				if server.tables.Remove(*item) {
-					log.Printf("check node[%+v] not liveness, remove it...\n", item.NodeId)
-				}
-			} else {
-				server.tables.SetSeen(*item)
-			}
+	allItems := tables.GetAllItems()
+	for _, item := range allItems {
+		if server.tables.LastSeen(item) {
+			continue
 		}
+		if !server.checkNodeLiveness(item) {
+			if server.tables.Remove(item) {
+				log.Printf("check node[%+v] not liveness, remove it...\n", item.NodeId)
+			}
+			continue
+		}
+		server.tables.SetSeen(item)
 	}
 }
 
@@ -136,6 +131,7 @@ func (server *Server) findNodes() {
 			if server.tables.Remove(item) {
 				log.Printf("check node[%+v] not liveness, remove it...\n", item.NodeId)
 			}
+			continue
 		}
 		for _, node := range remoteNodes {
 			if _, ok := visit[node]; ok {
