@@ -6,24 +6,94 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/Shonminh/distribute-network-demo/p2p/crypto"
 	"github.com/Shonminh/distribute-network-demo/p2p/metadata"
+	"io"
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 )
 
 var address = flag.String("address", "127.0.0.1:8080", "listen address, default 127.0.0.1:8080")
+var configFile = flag.String("configFile", "config.json", "config file")
 
 type Server struct {
 	writerCh      chan *sendMessageGroup
 	listenConn    *net.UDPConn
 	wg            *sync.WaitGroup
 	serverUdpAddr net.UDPAddr // 本地udp 信息
+	nodeId        string      // 从本地文件中找，没有则生成。
+	cfg           config
+	cfgMutex      sync.Mutex
+	once          *sync.Once
+	tables        *metadata.Table // dht路由表
+}
+
+type config struct {
+	NodeId          string          `json:"NodeId"`
+	RoutingNodeList []metadata.Item `json:"RoutingNodeList"`
 }
 
 func init() {
 	flag.Parse()
+}
+
+func (server *Server) loadConfig() {
+	server.once.Do(func() {
+		server.cfgMutex.Lock()
+		defer server.cfgMutex.Unlock()
+		file, err := os.OpenFile(*configFile, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0744)
+		defer file.Close()
+		if err != nil {
+			panic(err)
+		}
+		all, err := io.ReadAll(file)
+		if err != nil {
+			panic(err)
+		}
+		cfg := config{}
+		_ = json.Unmarshal(all, &cfg)
+		server.cfg = cfg
+		server.nodeId = cfg.NodeId
+	})
+}
+
+func (server *Server) saveConfig() {
+	server.cfgMutex.Lock()
+	defer server.cfgMutex.Unlock()
+	server.cfg.RoutingNodeList = server.tables.GetAllItems()
+	marshal, _ := json.Marshal(server.cfg)
+	_ = os.WriteFile(*configFile, marshal, 0744)
+	log.Printf("save config to config file...\n")
+}
+
+// 启动的时候把从引导节点的配置和之前存到配置文件发现的node load到table中
+func (server *Server) loadTable() {
+	tables := server.tables
+	for _, v := range server.cfg.RoutingNodeList {
+		tables.Load(v)
+	}
+	// 引导节点
+	for _, v := range metadata.InitialNodeAddress {
+		tables.Load(v)
+	}
+}
+
+func (server *Server) saveNodeIdIfNeed() {
+	if server.nodeId == "" {
+		server.cfgMutex.Lock()
+		defer server.cfgMutex.Unlock()
+		nodeId := crypto.GenNodeId()
+		server.nodeId = nodeId
+		server.cfg.NodeId = nodeId
+		marshal, _ := json.Marshal(server.cfg)
+		err := os.WriteFile(*configFile, marshal, 0744)
+		if err != nil {
+			panic(err)
+		}
+	}
 }
 
 func NewServer() (*Server, error) {
@@ -43,7 +113,15 @@ func NewServer() (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{writerCh: make(chan *sendMessageGroup, writerChannelBufferSize), listenConn: conn, wg: &sync.WaitGroup{}, serverUdpAddr: *udpAddr}, nil
+	srv := &Server{writerCh: make(chan *sendMessageGroup, writerChannelBufferSize), listenConn: conn, wg: &sync.WaitGroup{},
+		serverUdpAddr: *udpAddr, once: &sync.Once{}}
+	// 加载配置
+	srv.loadConfig()
+	srv.saveNodeIdIfNeed()
+	tables := metadata.NewTable(srv.nodeId)
+	srv.tables = tables
+	srv.loadTable()
+	return srv, nil
 }
 
 func (server *Server) GetServerUdpAddr() net.UDPAddr {
@@ -53,11 +131,17 @@ func (server *Server) GetServerUdpAddr() net.UDPAddr {
 func (server *Server) Run() {
 	defer server.close()
 
-	server.wg.Add(3)
-	// 异步写入udp数据
+	server.wg.Add(5)
+	// 异步发送udp响应
 	go server.write()
+	// 监听udp请求
 	go server.listen()
-	go server.discovery()
+	// 本地路由表保存的节点状态检查
+	go server.scheduleCheck()
+	// 节点发现
+	go server.scheduleFindNodes()
+	// 保存配置
+	go server.scheduleSaveCfg()
 	server.wg.Wait()
 }
 
@@ -98,12 +182,8 @@ func (server *Server) dispatcher(ctx context.Context, fromAddr *net.UDPAddr, raw
 		return ErrUnknownMessage
 	case metadata.Ping:
 		return server.ping(ctx, fromAddr, message)
-	case metadata.Pong:
-		return server.pong(ctx, fromAddr, message)
 	case metadata.FindNodeReq:
 		return server.findNode(ctx, fromAddr, message)
-	case metadata.FindNodeResult:
-		return server.findNodeResult(ctx, fromAddr, message)
 	default:
 		return nil
 	}
@@ -116,7 +196,7 @@ func (server *Server) ping(ctx context.Context, fromAddr *net.UDPAddr, msg *meta
 	_ = json.Unmarshal(msg.Data, &pingMsg)
 	pongMsg := metadata.PongMsg{}
 	pongMsg.ReqId = pingMsg.ReqId
-	pongMsg.NodeId = getNodeId()
+	pongMsg.NodeId = server.nodeId
 	marshal, _ := json.Marshal(pongMsg)
 	resp := metadata.Message{Type: metadata.Pong, Data: marshal}
 	data, _ := json.Marshal(resp)
@@ -128,14 +208,26 @@ func (server *Server) pong(ctx context.Context, fromAddr *net.UDPAddr, msg *meta
 	return nil
 }
 
+// 查找本地路由表中的数据
 func (server *Server) findNode(ctx context.Context, fromAddr *net.UDPAddr, msg *metadata.Message) error {
-	// TODO implement me
-	return nil
-}
 
-func (server *Server) findNodeResult(ctx context.Context, fromAddr *net.UDPAddr, msg *metadata.Message) error {
-	// TODO implement me
-	return nil
+	findNodeMsg := metadata.FindNodeMsg{}
+	_ = json.Unmarshal(msg.Data, &findNodeMsg)
+	// 将请求的node id加入到本地路由表。
+	server.tables.AddRequestNodeId(findNodeMsg.NodeId, fromAddr.IP.String(), findNodeMsg.ListenPort)
+
+	// 搜索最近的k bucket中的元素返回。
+	closestItems := server.tables.FindClosestItem(findNodeMsg.NodeId, 5)
+	findNodeResultMsg := metadata.FindNodeResultMsg{Items: closestItems}
+	findNodeResultMsg.ReqId = findNodeMsg.ReqId
+	findNodeResultMsg.NodeId = server.nodeId
+	marshal, _ := json.Marshal(findNodeResultMsg)
+	resp := metadata.Message{
+		Type: metadata.FindNodeResult,
+		Data: marshal,
+	}
+	data, _ := json.Marshal(resp)
+	return server.sendWriter(ctx, &sendMessageGroup{sendData: data, toAddr: fromAddr})
 }
 
 type sendMessageGroup struct {
@@ -163,8 +255,4 @@ func (server *Server) write() {
 			log.Println("Error sending response: ", err)
 		}
 	}
-}
-
-func getNodeId() string {
-	return "TODO implement me"
 }

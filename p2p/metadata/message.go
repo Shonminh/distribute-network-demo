@@ -16,7 +16,7 @@ const (
 )
 
 type DefaultMsg struct {
-	ReqId  uint
+	ReqId  uint32
 	NodeId string
 }
 
@@ -29,10 +29,11 @@ type PongMsg struct {
 }
 
 type FindNodeMsg struct {
+	ListenPort int
 	DefaultMsg
 }
 
 type FindNodeResultMsg struct {
-	IpList []uint
+	Items []Item
 	DefaultMsg
 }
